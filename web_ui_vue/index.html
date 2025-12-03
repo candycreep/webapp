@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Каталог автомобилей</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Каталог автомобилей</h1>
+            <div class="search-bar">
+                <input v-model="searchId" placeholder="Поиск по ID (оставьте пустым для всех)" @keyup.enter="searchCar">
+                <button @click="searchCar">Найти</button>
+            </div>
+        </header>
+        <div v-if="cars.length === 0 && searched" class="no-results">
+            Автомобиль не найден
+        </div>
+        <div id="carsContainer">
+            <div v-for="car in cars" :key="car.id" class="car-card">
+                <img :src="carImages[car.id] || 'https://placehold.co/300x200?text=Loading...'" :alt="`${car.firm} ${car.model}`">
+                <h3>{{ car.firm }} {{ car.model }}</h3>
+                <p>Год: {{ car.year }}</p>
+                <p>Мощность: {{ car.power }} л/c</p>
+                <p>Цвет: {{ car.color }}</p>
+                <p>Цена: ${{ car.price }}</p>
+                <button class="edit" @click="openEditModal(car)">Редактировать</button>
+                <button class="delete" @click="deleteCar(car.id)">Удалить</button>
+            </div>
+        </div>
+
+        <div v-if="showModal" class="modal">
+            <div class="modal-content">
+                <span class="close" @click="closeModal">&times;</span>
+                <h2>Редактировать автомобиль</h2>
+                <form @submit.prevent="saveEdit">
+                    <label>Фирма: <input v-model="editCar.firm" required></label>
+                    <label>Модель: <input v-model="editCar.model" required></label>
+                    <label>Год: <input type="number" v-model="editCar.year" required></label>
+                    <label>Мощность (HP): <input type="number" v-model="editCar.power" required></label>
+                    <label>Цвет: <input v-model="editCar.color" required></label>
+                    <label>Цена ($): <input type="number" v-model="editCar.price" required></label>
+                    <label>Dealer ID: <input type="number" v-model="editCar.dealer_id" required></label>
+                    <button type="submit">Сохранить</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        createApp({
+            data() {
+                return {
+                    cars: [],
+                    searchId: '',
+                    searched: false,
+                    showModal: false,
+                    editCar: {},
+                    carImages: {}  // Кэш для изображений из Wikimedia
+                };
+            },
+            mounted() {
+                this.fetchCars();
+            },
+            methods: {
+                async fetchCars() {
+                    try {
+                        const res = await fetch('http://127.0.0.1:8000/cars/');
+                        if (!res.ok) throw new Error('Ошибка загрузки');
+                        this.cars = await res.json();
+                        await this.loadImages();  // Загружаем изображения после получения данных
+                    } catch (error) {
+                        alert('Не удалось загрузить данные');
+                    }
+                },
+                async searchCar() {
+                    this.searched = true;
+                    if (!this.searchId) {
+                        this.fetchCars();
+                        return;
+                    }
+                    try {
+                        const res = await fetch(`http://127.0.0.1:8000/cars/${this.searchId}`);
+                        if (!res.ok) {
+                            this.cars = [];
+                            throw new Error('Не найдено');
+                        }
+                        this.cars = [await res.json()];
+                        await this.loadImages();  // Загружаем изображения после поиска
+                    } catch (error) {
+                    }
+                },
+                async deleteCar(id) {
+                    if (!confirm('Удалить?')) return;
+                    try {
+                        const res = await fetch(`http://127.0.0.1:8000/cars/${id}`, { method: 'DELETE' });
+                        if (!res.ok) throw new Error('Ошибка удаления');
+                        this.fetchCars();
+                    } catch (error) {
+                        alert('Не удалось удалить');
+                    }
+                },
+                openEditModal(car) {
+                    this.editCar = { ...car }; // Копируем объект
+                    this.showModal = true;
+                },
+                closeModal() {
+                    this.showModal = false;
+                },
+                async saveEdit() {
+                    try {
+                        const payload = {
+                            firm: this.editCar.firm,
+                            model: this.editCar.model,
+                            year: this.editCar.year,
+                            power: this.editCar.power,
+                            color: this.editCar.color,
+                            price: this.editCar.price,
+                            dealer_id: this.editCar.dealer_id
+                        };
+                        const res = await fetch(`http://127.0.0.1:8000/cars/${this.editCar.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (!res.ok) {
+                            const errorData = await res.json();
+                            throw new Error(errorData.detail || 'Ошибка сохранения');
+                        }
+                        this.closeModal();
+                        this.fetchCars();
+                    } catch (error) {
+                        alert('Не удалось сохранить: ' + error.message);
+                    }
+                },
+                async loadImages() {
+                    for (let car of this.cars) {
+                        if (!this.carImages[car.id]) {
+                            this.carImages[car.id] = await this.getWikiImage(car);
+                        }
+                    }
+                },
+                async getWikiImage(car) {
+                    try {
+                        const query = encodeURIComponent(`${car.firm} ${car.model}`);
+                        const res = await fetch(`https://en.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages&titles=${query}&pithumbsize=300&origin=*`);
+                        const data = await res.json();
+                        const page = Object.values(data.query.pages)[0];
+                        return page.thumbnail ? page.thumbnail.source : 'https://placehold.co/300x200?text=No+Image';
+                    } catch (error) {
+                        return 'https://placehold.co/300x200?text=Error';
+                    }
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
